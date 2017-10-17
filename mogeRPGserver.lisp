@@ -19,6 +19,9 @@
 (defparameter *ai* nil)
 (defparameter *ai-name* nil)
 
+(defconstant +battle-delay-seconds+ 0.2)
+(defconstant +map-delay-seconds+ 0.2)
+
 ;;(defparameter p1 (make-player))
 (defstruct player
   (hp 30)
@@ -265,7 +268,7 @@
 		  (if (monster-dead m2)
 		      (monster-hit2 p (random-monster) x)
 		      (monster-hit2 p m2 x))))))))))
-    (sleep 1)))
+    (sleep +battle-delay-seconds+)))
 	   
 ;;n内の１以上の乱数
 (defun randval (n)
@@ -817,7 +820,7 @@
 	((equal str "RIGHT") (update-map map p 0 1))
 	((equal str "LEFT") (update-map map p 0 -1))
 	((equal str "HEAL") (use-heal p)))
-      (sleep 1)
+      (sleep +map-delay-seconds+)
       (map-move map p))))
 
 ;;エンディング

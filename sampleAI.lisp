@@ -31,7 +31,7 @@
   (ignore-errors
   (loop do
     (let ((json-data (jonathan:parse (read-line) :as :alist)))
-      
+
       (cond
 	((assoc "map" json-data :test #'equal)
 	 (map-mode json-data))
@@ -45,4 +45,3 @@
       (fresh-line)))))
 
 (main)
-       
