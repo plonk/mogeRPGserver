@@ -21,8 +21,8 @@
 (defparameter *ai-name* nil)
 (defparameter *ai-command-line* nil)
 
-(defconstant +battle-delay-seconds+ 0.2)
-(defconstant +map-delay-seconds+ 0.2)
+(defparameter *battle-delay-seconds* 0.3)
+(defparameter *map-delay-seconds* 0.3)
 
 (defparameter *gamen-clear?* t)
 
@@ -52,6 +52,8 @@
   (tate 11)  ;;縦幅
   (yoko 11)  ;;横幅
   (stop-list nil)) ;;行き止まりリスト
+
+(load "maze-test.lisp" :external-format :utf-8)
 
 ;;json用player情報リスト作成
 (defun player-list (p)
@@ -100,21 +102,13 @@
   (sb-ext:run-program "/bin/sh" (list "-c" cmd) :input nil :output *standard-output*))
 
 (defun gamen-clear ()
-  (sh "clear"))
+  (when *gamen-clear?*
+    (sh "clear")))
 
-;;コンティニューメッセージ
-(defun continue-message ()
-  (format t "もう一度挑戦しますか？(yes=1 or no=2)~%")
-  (case (read-command-char)
-    (1 (main))
-    (2 nil)
-    (otherwise (continue-message))))
 ;;ゲームオーバーメッセージ
 (defun game-over-message (p)
   (format t "Game Over.~%")
   (format t "あなたは地下~d階で力尽きた。~%" (player-map p)))
-  ;;(ranking-dialog 0)
-  ;;(continue-message))
 
 ;;勝利メッセージ
 (defun victory-message ()
@@ -156,8 +150,6 @@
 ;;戦闘終了後アイテム入手
 (defun item-drop? (p)
   (gamen-clear)
-  (show-pick-monsters)
-  (format t "~%~%")
   (dolist (item (player-drop p))
     (let ((buki (assoc item *event-buki* :test #'equal)))
       (cond
@@ -180,35 +172,35 @@
      (init-monsters p)))
   (game-loop p) ;;バトルループ
   (gamen-clear)
-  (show-pick-monsters)
-  (format t "~%~%")
   (cond
     ((player-dead p) ;;プレイヤーが死んだとき
      (game-over-message p)
      (setf *end* 2))
+    ((= *end* 2) ;;エラー終了
+     nil)
     (t ;;(monsters-dead) 敵を倒したとき
      (level-up p) ;;レベルアップ処理
      (if (player-drop p)
 	 (item-drop? p)) ;;アイテム入手処理
      (cond
-       ((= *boss?* 1) (setf *end* 1)) ;;ラスボスならエンディングへ
+       ((= *boss?* 1)
+	(setf *end* 1)
+	(victory-message)) ;;ラスボスならエンディングへ
        ((= *boss?* 2) (setf *ha2ne2* t))) ;;中ボス倒したフラグ
      ;;バトルフラグとボスフラグを初期化
      (setf *battle?* nil
-	   *boss?* 0)
-     (victory-message))))
+	   *boss?* 0))))
 
 ;;バトル時、プレイヤーが死ぬかモンスターが全滅するまでループ
 (defun game-loop (p)
   (unless (or (player-dead p) (monsters-dead))
     (dotimes (k (1+ (truncate (/ (max 0 (player-agi p)) 15))))
-      (unless (monsters-dead)
+      (unless (or (monsters-dead) (= *end* 2))
 	(player-attack2 p)))
-    (cond 
+    (cond
+      ((= *end* 2) ;;エラー集雨量
+       nil)
       ((null (monsters-dead))
-       (gamen-clear)
-       (show-pick-monsters)
-       (format t "------------------------敵のターン--------------------------~%")
        (map 'list
             (lambda (m)
               (or (monster-dead m) (monster-attack m p)))
@@ -227,57 +219,56 @@
 ;;ステータスとバトルコマンド表示
 (defun status-and-command (p)
   (format t "------------------------------------------------------------~%")
-  (format t ":ステータス     :コマンド~%")
-  (loop for atk in *attack*
-	for i from 0
+  (format t ":ステータス~%")
+  (loop for i from 0 to 4
 	do
 	   (case i
-	     (0 (format t "~a" (minimum-column 15 (format nil "L v  ~2d" (player-level p)))))
-	     (1 (format t "~a"
-			    (minimum-column 15 (format nil "H P  ~2d/~2d" (player-hp p) (player-maxhp p)))))
-	     (2 (format t "~a"
-			    (minimum-column 15 (format nil "ATK  ~2d/~2d" (player-str p) (player-maxstr p)))))
-	     (3 (format t "~a"
-			    (minimum-column 15 (format nil "AGI  ~2d/~2d" (player-agi p) (player-maxagi p)))))
-	     (4 (format t "~a"
-			    (minimum-column 15 (format nil "EXP ~3d/~3d" (player-exp p) *lv-exp*)))))
-	   (format t "  ")
-	   (if (string= "回復薬" atk)
-	       (format t "~a[~d]~%" atk (player-heal p))
-	       (format t "~a~%" atk))))
+	     (0 (format t "L v  ~2d~%" (player-level p)))
+	     (1 (format t "H P  ~2d/~2d~%" (player-hp p) (player-maxhp p)))
+	     (2 (format t "ATK  ~2d/~2d~%" (player-str p) (player-maxstr p)))
+	     (3 (format t "AGI  ~2d/~2d~%" (player-agi p) (player-maxagi p)))
+	     (4 (format t "EXP ~3d/~3d~%" (player-exp p) *lv-exp*)))))
 ;;攻撃方法入出力
 (defun player-attack2 (p)
-  (let ((str nil))
-    (gamen-clear)
-    (show-pick-monsters)
-    (status-and-command p)
+  (let ((str-l nil) (str nil) (act nil))
     (format *ai* "~a~%" (jonathan:to-json (append (list :|battle| 1) (monster-list) (player-list p))))
     (finish-output *ai*)
-    (setf str (read-line *ai*))
+    (setf str-l (read-line *ai*)
+	  str (ppcre:split #\space str-l)
+	  act (car str))
     (cond
-      ((string= str "HEAL")
-       (use-heal p))
-      ((string= str "SWING")
-       (dotimes (x (1+ (randval (truncate (/ (player-str p) 3)))))
-	 (unless (monsters-dead)
-	   (monster-hit2 p (random-monster) 1))))
-      (t
-       (let* ((str-l (ppcre:split #\space str))
-	      (act (car str-l)))
-	 (cond
-	   ((string= act "STAB")
-	    (let ((m (aref *monsters* (parse-integer (cadr str-l)))))
-	      (monster-hit2 p m (+ 2 (randval (ash (player-str p) -1))))))
-	   ((string= act "DOUBLE")
-	    (let ((m (aref *monsters* (parse-integer (second str-l))))
-		  (x (randval (truncate (/ (player-str p) 6)))))
-	      (monster-hit2 p m x) ;;選ばれたモンスターにダメージ与える
-	      (unless (monsters-dead) ;;生き残ってるモンスターがいるなら２回目の攻撃
-		(let ((m2 (aref *monsters* (parse-integer (third str-l)))))
-		  (if (monster-dead m2)
-		      (monster-hit2 p (random-monster) x)
-		      (monster-hit2 p m2 x))))))))))
-    (sleep *battle-delay-seconds*)))
+      ((find act '("HEAL" "SWING" "STAB" "DOUBLE") :test #'equal)
+       (gamen-clear)
+       (show-pick-monsters)
+       (status-and-command p)
+       (cond
+	 ((string= act "HEAL")
+	  (use-heal p))
+	 ((string= act "SWING")
+	  (format t "「なぎはらい！」~%") 
+	  (dotimes (x (1+ (randval (truncate (/ (player-str p) 3)))))
+	    (unless (monsters-dead)
+	      (monster-hit2 p (random-monster) 1))))
+	 (t
+	  (cond
+	    ((string= act "STAB")
+	     (format t "「~c に斬りかかった！」~%" (number->a (parse-integer (cadr str))))
+	     (let ((m (aref *monsters* (parse-integer (cadr str)))))
+	       (monster-hit2 p m (+ 2 (randval (ash (player-str p) -1))))))
+	    ((string= act "DOUBLE")
+	     (format t "「~c と ~c にダブルアタック！」~%" (number->a (parse-integer (second str)))
+		     (number->a (parse-integer (third str))))
+	     (let ((m (aref *monsters* (parse-integer (second str))))
+		   (x (randval (truncate (/ (player-str p) 6)))))
+	       (monster-hit2 p m x) ;;選ばれたモンスターにダメージ与える
+	       (unless (monsters-dead) ;;生き残ってるモンスターがいるなら２回目の攻撃
+		 (let ((m2 (aref *monsters* (parse-integer (third str)))))
+		   (if (monster-dead m2)
+		       (monster-hit2 p (random-monster) x)
+		       (monster-hit2 p m2 x)))))))))
+       (sleep *battle-delay-seconds*))
+      (t (format t "~A~%" str-l) ;;規定文字列以外の表示(エラーとか)
+	 (setf *end* 2)))))
 	   
 ;;n内の１以上の乱数
 (defun randval (n)
@@ -305,7 +296,8 @@
 	   (cond
 	     ((monster-dead m)
 	      (format t "~a" (minimum-column 3 ""))
-	      (format t "~c."  (number->a (incf x)))
+	      (format t "~c."  (number->a x))
+	      (incf x)
 	      (if (> (monster-damage m) 0)
 		  (progn
 		    (format t "~a" (minimum-column 31 "**死亡**"))  
@@ -313,7 +305,8 @@
 		  (format t "**死亡**~%")))
 	     (t
 	      (format t "~a" (minimum-column 3 ""))
-	      (format t "~c."  (number->a (incf x)))
+	      (format t "~c."  (number->a x))
+	      (incf x)
 	      (format t "~a"
 			  (minimum-column 9 (format nil "(HP=~d) " (monster-health m))))
 	      (format t "~a" (minimum-column 22 (monster-show m)))
@@ -384,9 +377,9 @@
 ;;モンスターグループが全滅したか判定
 (defun monsters-dead ()
   (every #'monster-dead *monsters*))
-;; 1->a 2->b 3->c ...
+;; 0->a 1->b 2->c ...
 (defun number->a (x)
-  (code-char (+ x 96)))
+  (code-char (+ x 97)))
 
 ;;-----------------------------------------------------------------------
 ;;モンスターデータ作成用
@@ -403,7 +396,7 @@
       (push "ハツネツの剣" (player-drop p))))
 
 (defun orc-drop (p)
-  (if (= 1 (random 10))
+  (if (= 1 (random 20))
       (push "ハンマー" (player-drop p))))
 (defun slime-drop (p)
   (if (= 1 (random 20))
@@ -637,125 +630,6 @@
     (if (> pad 0)
 	(concatenate 'string string (make-string pad :initial-element #\ ))
         string)))
-;;持ち物表示
-(defun show-item (p)
-  (gamen-clear)
-  (loop for buki in (player-item p)
-	for x from 1 do
-	  (format t "[~c]:~a:力+~2,'0d HP+~2,'0d 素早さ+~2,'0d~%"
-		      (number->a x) (minimum-column 18 (first buki)) (second buki)
-		      (third buki) (fourth buki)))
-  (format t "アルファベットを選ぶと装備します~%")
-  (format t "[z]戻る")
-  (let ((x (ascii->number (read-command-char))))
-    (cond
-      ((and (integerp x) (<= 0 x 24) (< x (length (player-item p))))
-       (let ((buki (nth x (player-item p))))
-	 (if (not (string= "なし" (first (player-buki p))))
-	     (push (player-buki p) (player-item p)))
-	 (equip-buki buki p)
-	 (setf (player-item p) (remove buki (player-item p) :count 1 :test #'equal))))
-      ((and (integerp x) (= x 25)) ;;zキーで戻る
-       )
-      (t
-       (show-item p)))))
-    
-;;武器合成 1つめの武器を選ぶ
-(defun buki-gousei1 (p)
-  (gamen-clear)
-  (let ((item-list (copy-tree (player-item p))))
-    (format t "--------------ひとつ目の合成に使う武器を選んでください-------------~%")
-    (loop for buki in item-list
-	  for x from 1 do
-	    (format t "[~c]:~a:力+~2,'0d HP+~2,'0d 素早さ+~2,'0d~%"
-			(number->a x) (minimum-column 18 (first buki)) (second buki)
-			(third buki) (fourth buki)))
-    (format t "[z]戻る")
-    (let ((x (ascii->number (read-command-char))))
-      (cond
-	((and (integerp x) (<= 0 x 24) (< x (length item-list)))
-	 (let ((buki (nth x item-list)))
-	   ;;選んだ武器をリストから消す
-	   (setf item-list (remove buki item-list :count 1 :test #'equal))
-	   (buki-gousei2 p buki item-list)))
-	((and (integerp x) (= x 25)) ;;zキーで戻る
-	 )
-	(t
-	 (buki-gousei1 p))))))
-;;武器合成2つめの武器を選ぶ
-(defun buki-gousei2 (p item1 item-list)
-  (gamen-clear)
-  (format t "--------------ふたつ目の合成に使う武器を選んでください-------------~%")
-  (format t "1つめの武器:~a~%" (first item1)) 
-  (loop for buki in item-list
-	for x from 1 do
-	  (format t "[~c]:~a:力+~2,'0d HP+~2,'0d 素早さ+~2,'0d~%"
-		      (number->a x) (minimum-column 18 (first buki)) (second buki)
-		      (third buki) (fourth buki)))
-  (format t "[z]戻る")
-  (let ((x (ascii->number (read-command-char))))
-    (cond
-      ((and (integerp x) (<= 0 x 24) (< x (length item-list)))
-       (let ((buki (nth x item-list)));;2つめの武器
-	 ;;選んだ武器をリストから消す
-	 (setf item-list (remove buki item-list :count 1 :test #'equal))
-	 (buki-gousei3 p item1 buki item-list)))
-      ((and (integerp x) (= x 25)) ;;zキーで1つめの武器を選ぶとこに戻る
-       (buki-gousei1 p))
-      (t
-       (buki-gousei2 p item1 item-list)))))
-;;武器合成確認
-(defun buki-gousei3 (p item1 item2 item-list)
-  (gamen-clear)
-  (format t "~aと~aを合成しますか？~%" (first item1) (first item2))
-  (format t "[1]:はい [2]:いいえ~%")
-  (case (read-command-char)
-    (1 (buki-gousei-da p item1 item2 item-list))
-    (2 )
-    (otherwise (buki-gousei3 p item1 item2))))
-;;武器合成するよ
-(defun buki-gousei-da (p item1 item2 item-list)
-  (let* ((item1-num (position item1 *buki-d* :test #'equal :key #'car))
-	 (item2-num (position item2 *buki-d* :test #'equal :key #'car))
-	 (buki-list-num (length *buki-d*))
-	 (omomi-list (make-list buki-list-num))
-	 (max-omomi 300)
-	 (kizami 0)
-	 (omomi-max-pos 0))
-    (setf (player-item p) item-list) ;;合成に使った武器を消したリストに置き換える
-    (if (> item1-num item2-num)
-	(setf omomi-max-pos (min buki-list-num (+ item1-num (1+ (floor item2-num 10)))))
-	(setf omomi-max-pos (min buki-list-num (+ item2-num (1+ (floor item1-num 10))))))
-    (setf kizami (floor max-omomi omomi-max-pos))
-    (loop for i from 0 below buki-list-num
-	  for kizamin = 1 then kizamin
-	  do
-	     (setf (nth i omomi-list) (max 1 kizamin))
-	     (if (>= i omomi-max-pos)
-		 (decf kizamin (* 2 kizami))
-		 (incf kizamin kizami)))
-    (gousei-kansei p (car (nth (rnd-pick 0 (random (apply #'+ omomi-list)) omomi-list buki-list-num)
-				       *buki-d*)))))
-;;合成武器完成
-(defun gousei-kansei (p item)
-  (scr-fresh-line)
-  (format t "~aが出来上がりました！！~%" (first item))
-  (format t "~a:力+~2,'0d HP+~2,'0d 素早さ+~2,'0d~%"
-	      (first item) (second item)
-	      (third item) (fourth item))
-  (format t "[z]:装備する [x]:捨てる [c]:袋にしまう~%")
-  (case (read-command-char)
-    (z
-     (if (not (string= "なし" (first (player-buki p))))
-	 (push (player-buki p) (player-item p)))
-     (equip-buki item p))
-    (x )
-    (c ;;持ち物に追加
-     (add-item p item))
-    (otherwise
-     (gousei-kansei item))))
-    
-    
 
 
 
@@ -775,14 +649,6 @@
 
 ;;マップ表示+マップの情報リスト作成
 (defun show-map (map p)
-  (let ((blocks nil)
-	(walls nil)
-	(items nil)
-	(boss nil)
-	(kaidan nil)
-	(ha2 nil)
-	;;(path nil)
-	(events nil))
     (gamen-clear)
     (format t "地下~d階  " (player-map p))
     (show-player p)
@@ -790,15 +656,6 @@
     (loop for i from 0 below (donjon-tate map) do
       (loop for j from 0 below (donjon-yoko map) do
 	(let ((x (aref (donjon-map map) i j)))
-	  (case x
-	    ;;(0  (push (list j i) path))   ;;道
-	    (30 (push (list j i) blocks)) ;; 壁
-	    (40 (push (list j i) walls)) ;; 壊せない壁
-	    (5  (push (list j i) boss)) ;;ボス
-	    (3  (push (list j i) items)) ;; 宝箱
-	    (2  (push (list j i) kaidan)) ;; 下り階段
-	    (6  (push (list j i) events)) ;; イベント
-	    (7  (push (list j i) ha2))) ;; 中ボス ハツネツエリア
 	  (format t "~a" (map-type x))
 	  (if (= j (- (donjon-yoko map) 1))
 	      (case i
@@ -809,27 +666,53 @@
 		(5 (format t " 薬を使う[q]~%"))
 		(6 (format t " 終わる[r]~%"))
 	      (otherwise (fresh-line)))))))
-    (show-msg p)
+    (show-msg p))
+
+(defun map-data-list (map)
+  (let ((blocks nil)
+	(walls nil)
+	(items nil)
+	(boss nil)
+	(kaidan nil)
+	(ha2 nil)
+	(events nil))
+    (loop for i from 0 below (donjon-tate map) do
+      (loop for j from 0 below (donjon-yoko map) do
+	(let ((x (aref (donjon-map map) i j)))
+	  (case x
+	    (30 (push (list j i) blocks)) ;; 壁
+	    (40 (push (list j i) walls)) ;; 壊せない壁
+	    (5  (push (list j i) boss)) ;;ボス
+	    (3  (push (list j i) items)) ;; 宝箱
+	    (2  (push (list j i) kaidan)) ;; 下り階段
+	    (6  (push (list j i) events)) ;; イベント
+	    (7  (push (list j i) ha2)))))) ;; 中ボス ハツネツエリア
     (list :|blocks| blocks :|walls| walls :|items| items :|boss| boss :|kaidan| kaidan
 	  :|events| events :|ha2| ha2)))
+    
 
 ;;マップ情報とプレイヤー情報を渡して移動先を受け取る
 (defun map-move (map p)
   (unless (or *battle?* (= *end* 2))
     ;;バトル時と差別化するため先頭にmapってのいれとく.1は特に意味なし
-    (let ((json (append (list :|map| 1) (player-list p) (show-map map p)))
+    (let ((json (append (list :|map| 1) (player-list p) (map-data-list map)))
 	  (str nil))
       (format *ai* "~a~%" (jonathan:to-json json)) ;;データ送る
       (finish-output *ai*) ;;なぞ
       (setf str (read-line *ai*)) ;;データもらう
-      (format t "~a~%" str)
-      (cond 
-	((equal str "UP") (update-map map p -1 0))
-	((equal str "DOWN") (update-map map p 1 0))
-	((equal str "RIGHT") (update-map map p 0 1))
-	((equal str "LEFT") (update-map map p 0 -1))
-	((equal str "HEAL") (use-heal p)))
-      (sleep *map-delay-seconds*)
+      
+      (cond
+	((find str '("UP" "DOWN" "RIGHT" "LEFT" "HEAL") :test #'equal)
+	 (show-map map p)
+	 (cond 
+	   ((equal str "UP") (update-map map p -1 0))
+	   ((equal str "DOWN") (update-map map p 1 0))
+	   ((equal str "RIGHT") (update-map map p 0 1))
+	   ((equal str "LEFT") (update-map map p 0 -1))
+	   ((equal str "HEAL") (use-heal p)))
+	 (format t "~a~%" str) ;;アクション表示
+	 (sleep *map-delay-seconds*))
+	(t (format t "~a~%" str))) ;;規定の出力以外(エラーとか)を表示
       (map-move map p))))
 
 ;;エンディング
@@ -854,6 +737,8 @@
     (cond
       ((= *end* 1) ;;ゲームクリア
        (ending))
+      ((= *end* 2) ;;規定の文字列以外で終了
+       nil)
       ((= *end* 0) ;;ゲームループ
        (main-game-loop map p)))))
 ;;ゲーム開始
@@ -879,7 +764,7 @@
           :short #\h
           :long "help")
    (:name :random-seed
-          :description "乱数の種(非負整数。負数で起動時に環境から設定する)"
+          :description "乱数の種(非負整数)"
           :short #\r
           :long "random-seed"
           :arg-parser #'parse-integer)
@@ -920,31 +805,6 @@
   (decf (player-hammer p)))
 ;;(format t "「壁を壊しました。」~%"))))
 
-;;アイテムを捨てる入れ替える
-(defun throw-item (p item)
-  (gamen-clear)
-  (format t "-------------持ち物が一杯です。捨てる武器を選んでください-------------~%")
-  (loop for buki in (player-item p)
-	for x from 1 do
-	  (format t "[~c]:~a:力+~2,'0d HP+~2,'0d 素早さ+~2,'0d~%"
-		      (number->a x) (minimum-column 18 (first buki)) (second buki)
-		      (third buki) (fourth buki)))
-  (format t "[z]:戻る(拾った武器を捨てる)")
-  (let ((x (ascii->number (read-command-char))))
-    (cond
-      ((and (integerp x) (<= 0 x 19) (< x (length (player-item p))))
-       (setf (nth x (player-item p)) item))
-      ((and (integerp x) (= x 25)) ;;zキーで戻る
-       )
-      (t
-       (throw-item p item)))))
-  
-;;持ち物にアイテム追加
-(defun add-item (p item)
-  (if (> 20 (length (player-item p))) ;;持ち物２０個まで
-      (push item (player-item p))
-      (throw-item p item))) ;;アイテムを入れ替える
-      
 
 ;;武器装備してステータス更新
 (defun equip-buki (item p)
@@ -1023,19 +883,7 @@
     (setf omomi (butlast omomi))
     (push 10 omomi)
     (mapcar #'cons buki omomi)))
-;;テスト用------------------------------------
-#|
-(defun test-pick ()
-  (let ((hoge (make-array 54)))
-    (dotimes (i 10000)
-      (incf (aref hoge (weightpick *omomin*))))
-    hoge))
-(defun test-hoge ()
-  (let ((x 1))
-     (loop for hoge from 0 to 53)
-     collect x
-     do (incf x 1)))
-|#
+
 ;;---------------------------------------------
 ;;武器ゲット２ 全アイテムからランダム
 (defun item-get2 (p)
