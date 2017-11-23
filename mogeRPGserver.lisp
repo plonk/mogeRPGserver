@@ -737,9 +737,10 @@
 	(orc-battle p))
     (cond
       ((= *end* 1) ;;ゲームクリア
-       (ending))
+       (ending)
+       (format *error-output* "101~%"))
       ((= *end* 2) ;;規定の文字列以外で終了
-       nil)
+       (format *error-output* "~A~%" (player-map p)))
       ((= *end* 0) ;;ゲームループ
        (main-game-loop map p)))))
 ;;ゲーム開始
