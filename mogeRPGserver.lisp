@@ -220,14 +220,15 @@
 (defun status-and-command (p)
   (format t "------------------------------------------------------------~%")
   (format t ":ステータス~%")
-  (loop for i from 0 to 4
+  (loop for i from 0 to 5
 	do
 	   (case i
 	     (0 (format t "L v  ~2d~%" (player-level p)))
 	     (1 (format t "H P  ~2d/~2d~%" (player-hp p) (player-maxhp p)))
 	     (2 (format t "ATK  ~2d/~2d~%" (player-str p) (player-maxstr p)))
 	     (3 (format t "AGI  ~2d/~2d~%" (player-agi p) (player-maxagi p)))
-	     (4 (format t "EXP ~3d/~3d~%" (player-exp p) *lv-exp*)))))
+	     (4 (format t "EXP ~3d/~3d~%" (player-exp p) *lv-exp*))
+	     (5 (format t "回復~2d個~%" (player-heal p))))))
 ;;攻撃方法入出力
 (defun player-attack2 (p)
   (let ((str-l nil) (str nil) (act nil))
