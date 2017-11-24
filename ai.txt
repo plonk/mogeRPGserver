@@ -1,1 +1,1 @@
-※ここにAIの起動方法を書く
+ruby ../yotemogeai/ai.rb
