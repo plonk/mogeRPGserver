@@ -767,17 +767,31 @@
 ;;ゲーム開始
 (defun main ()
   (parse-args)
-  (load-ai)
+  (handler-case
+   (load-ai)
+   (simple-error (c) ;;AIコマンドが存在しない、実行許可がないなど
+                 (format t "~A~%" c)
+                 (sb-ext:exit)))
   #+nil (setf *random-state* (make-random-state t))
-  (let* ((p (make-player)) 
-	 (map (make-donjon)))
-    (init-data) ;;データ初期化
-    (maze map p) ;;マップ生成
-    (main-game-loop map p)))
+  (handler-case
+   (let* ((p (make-player)) 
+          (map (make-donjon)))
+     (init-data) ;;データ初期化
+     (maze map p) ;;マップ生成
+     (main-game-loop map p))
+   (sb-int:simple-stream-error (c) ;;AIの終了などによってデータの受け渡しができない。
+                               (format t "ストリームエラーが発生しました。~%")
+                               (format t "~A~%" c)
+                               (sb-ext:exit))))
 
 (defun set-random-seed (n)
   (dotimes (i n)
     (random 2)))
+
+(defun parse-non-negative-number (str)
+  (if (ppcre:scan "^(\\d+|\\d+\\.\\d+)$" str)
+      (read-from-string str)
+    (error)))
 
 (defun parse-args ()
   (opts:define-opts
@@ -794,17 +808,17 @@
      :description "マップモード時の表示のディレイ(小数可) デフォルト0"
      :short #\d
      :long "map-delay"
-     :arg-parser #'read-from-string)
+     :arg-parser #'parse-non-negative-number)
     (:name :battle-delay
      :description "バトル時の表示のディレイ(小数可) デフォルト0"
      :short #\b
      :long "battle-delay"
-     :arg-parser #'read-from-string)
+     :arg-parser #'parse-non-negative-number)
     (:name :moge-delay
      :description "もげぞう戦とハツネツ戦の表示のディレイ(小数可) デフォルト0"
      :short #\m
      :long "moge-delay"
-     :arg-parser #'read-from-string)
+     :arg-parser #'parse-non-negative-number)
     (:name :no-clear
      :description "画面のクリアをしない"
      :long "no-clear")
@@ -812,27 +826,42 @@
      :description "AIプログラムを起動するコマンドライン"
      :long "ai"
      :arg-parser #'identity))
-  (let ((options (opts:get-opts)))
-    (when (getf options :help)
-      (opts:describe
-       :prefix "もげRPGserver"
-       :usage-of "mogeRPGserver")
-      (sb-ext:exit))
-    (when (getf options :map-delay)
-      (setf *map-delay-seconds* (getf options :map-delay)))
-    (when (getf options :battle-delay)
-      (setf *battle-delay-seconds* (getf options :battle-delay)
-	    *bds* (getf options :battle-delay)))
-    (if (getf options :moge-delay)
-	(setf *boss-delay-seconds* (getf options :moge-delay))
-	(setf *boss-delay-seconds* *battle-delay-seconds*))
-    (if (getf options :random-seed)
-        (set-random-seed (getf options :random-seed))
-	(setf *random-state* (make-random-state t))) ; 環境から乱数を取得。
-    (when (getf options :no-clear)
-      (setf *gamen-clear?* nil))
-    (when (getf options :ai)
-      (setf *ai-command-line* (getf options :ai)))))
+  (handler-case
+   (multiple-value-bind
+       (options free-args)
+       (opts:get-opts)
+     (when free-args
+       (format t "解釈できないコマンドライン引数があります。~S~%" free-args)
+       (sb-ext:exit))
+     (when (getf options :help)
+       (opts:describe
+        :prefix "もげRPGserver"
+        :usage-of "mogeRPGserver")
+       (sb-ext:exit))
+     (when (getf options :map-delay)
+       (setf *map-delay-seconds* (getf options :map-delay)))
+     (when (getf options :battle-delay)
+       (setf *battle-delay-seconds* (getf options :battle-delay)
+             *bds* (getf options :battle-delay)))
+     (if (getf options :moge-delay)
+         (setf *boss-delay-seconds* (getf options :moge-delay))
+       (setf *boss-delay-seconds* *battle-delay-seconds*))
+     (if (getf options :random-seed)
+         (set-random-seed (getf options :random-seed))
+       (setf *random-state* (make-random-state t))) ; 環境から乱数を取得。
+     (when (getf options :no-clear)
+       (setf *gamen-clear?* nil))
+     (when (getf options :ai)
+       (setf *ai-command-line* (getf options :ai))))
+   (opts:unknown-option (c)
+    (format t "不明なオプションです。~A~%" (opts:option c))
+    (sb-ext:exit))
+   (opts:missing-arg (c)
+    (format t "オプション ~A に引数がありません。~%" (opts:option c))
+    (sb-ext:exit))
+   (opts:arg-parser-failed (c)
+    (format t "オプション ~A への引数 ~A が解釈できません。~%" (opts:option c) (opts:raw-arg c))
+    (sb-ext:exit))))
 
 ;;壁破壊
 (defun kabe-break (map p y x)
